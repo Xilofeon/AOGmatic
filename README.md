@@ -1,6 +1,6 @@
 # AOGMatic
 
-Aogmatic (DIY) pour le controle des sections avec des Servomoteurs via AgopenGps. Les models 3D présenté ici sont pour une utilisation avec un boitier HardySprayII ou EvrardEC2500.
+Aogmatic (DIY) pour le controle des sections avec des Servomoteurs via AgopenGps (5.xx). Les models 3D présenté ici sont pour une utilisation avec un boitier HardySprayII ou EvrardEC2500.
 Mais le code pourrais très bien servir à bien d'autre boitier ou autre utilisation.
 ![Video](Pics/VideoDemo.mp4)
 
@@ -13,7 +13,7 @@ Schéma de branchement:
 
 
 Liens des fichiers 3D:
-A venir...
+https://cults3d.com/fr/mod%C3%A8le-3d/outil/aogmatic-pour-hardy-sprayii
 
 
 Vidéo d'explication du montage des pièces 3D:
