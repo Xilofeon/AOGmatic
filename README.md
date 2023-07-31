@@ -22,7 +22,7 @@ Vidéo d'explication du montage des pièces 3D:
 https://www.youtube.com/watch?v=GPidbl-RtbM
 
 
-Utilisé le code Shield UDP si vous voulez utiliser un shield enc28j60.
+Utilisé le code UDP si vous voulez utiliser un shield enc28j60.
 
 # Fonctionnalités
 
