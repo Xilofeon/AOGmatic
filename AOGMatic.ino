@@ -1,7 +1,13 @@
-    /* V2.60 - 11/03/2023 - Daniel Desmartins
+    /* V2.70 - 30/07/2023 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
+     *
+     *  simulateur   ecrivain
+     *  Mode Demo, launches the demonstration of the servomotors. 
+     *  Advanced in a field in simulation in AOG... admired the result!!!
+     *  To activate do pulse on A0 to ground!
+     *  bric bric  29/07/2023
      */
 
 //pins:                                                                                    UPDATE YOUR PINS!!!    //<-
@@ -9,12 +15,13 @@
 #define PinAogReady 9 //Pin AOG Conntected                                                                        //<- 
 #define AutoSwitch 10  //Switch Mode Auto On/Off                                                                  //<-
 #define ManuelSwitch 11 //Switch Mode Manuel On/Off                                                               //<-
-#define WorkWithoutAogSwitch A4 //Switch for work without AOG (optional)                                          //<-
-const uint8_t switchPinArray[] = {2, 3, 4, 5, 6, 7, 8, 12, A0, A1, A2, A3}; //Pins, Switch activation sections    //<- max 12 sections
+#define WorkWithoutAogSwitch A5 //Switch for work without AOG (optional)                                          //<-
+#define PinDemoMode A0 //launches the demonstration of the servomotors. Advanced in a field in simulation in AOG... admired the result!!!
+const uint8_t switchPinArray[] = {2, 3, 4, 5, 6, 7, 8, 12, A1, A2, A3, A4}; //Pins, Switch activation sections    //<- max 12 sections
 //#define WORK_WITHOUT_AOG //Allows to use the box without aog connected (optional)
 #define WORK_WITHOUT_CONTROL //commenter si vous voulez utiliser le code avec controle par intérrupteur
 //#define EEPROM_USE //comment out if not use EEPROM and AOG config machine (not currently used in this code)
-boolean readyIsActive = LOW;
+bool readyIsActive = LOW;
 
 ///////////Régler ici la position d'ouverture, fermeture et neutre de vos servotmoteur (dans l'orde de 1 à 16)/////////////
 uint8_t positionOpen[] =    { 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15};   //position ouvert en degré
@@ -33,6 +40,12 @@ uint8_t positionClosed[] =  {155,155,155,155,155,155,155,155,155,155,155,155,155
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
+
+//Demo Mode
+const uint8_t message[] = { 0, 0, 0, 126, 9, 9, 126, 0, 0, 62, 65, 65, 62, 0, 0, 62, 65, 73, 58, 0, 0, 127, 2, 4, 2, 127, 0, 0, 126, 9, 9, 126, 0, 1, 1, 127, 1, 1, 0, 0, 65, 127, 65, 0, 0, 62, 65, 65, 34, 0, 0, 0, 0};
+const uint16_t tableau = 530;
+uint16_t boucle = 0;
+bool demoMode = false;
 
 //Variables:
 const uint8_t loopTime = 100; //10hz
@@ -77,6 +90,7 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(AutoSwitch, INPUT_PULLUP);  //INPUT_PULLUP: no external Resistor to GND or to PINx is needed, PULLUP: HIGH state if Switch is open! Connect to GND and D0/PD0/RXD
   pinMode(ManuelSwitch, INPUT_PULLUP);
+  pinMode(PinDemoMode, INPUT_PULLUP);
   #ifdef WORK_WITHOUT_CONTROL
   for (count = 0; count < NUM_OF_SECTIONS; count++) {
     pinMode(switchPinArray[count], OUTPUT);
@@ -140,7 +154,7 @@ void loop() {
 
     if (TIME_RETURN_NEUTRAL) returnNeutralPosition();
     
-    if ((watchdogTimer > 20)) {
+    if (watchdogTimer > 20) {
       if (aogConnected && watchdogTimer > 60) {
         aogConnected = false;
         firstConnection = true;
@@ -174,13 +188,40 @@ void loop() {
         }
       }
       
+      //Add For control Master swtich
+      if (NUM_OF_SECTIONS < 16) {
+        setSection(15, (sectionLo || sectionHi));
+      }
+      
       //show life in AgIO
       if (++helloCounter > 10 && !helloUDP) {
         Serial.write(helloAgIO, sizeof(helloAgIO));
         Serial.flush();   // flush out buffer
         helloCounter = 0;
       }
-    }
+      
+      //Demo Mode
+      if (demoMode) {
+        if (boucle++ > tableau) boucle = 0;
+        uint8_t boom = message[boucle/10];
+
+        AOG[9] = (uint8_t)boom; //onLo;
+        AOG[10] = (uint8_t)~boom; //offLo;
+
+        //checksum
+        int16_t CK_A = 0;
+        for (uint8_t i = 2; i < sizeof(AOG) - 1; i++)
+        {
+          CK_A = (CK_A + AOG[i]);
+        }
+        AOG[sizeof(AOG) - 1] = CK_A;
+        
+	    Serial.write(AOG, sizeof(AOG));
+        Serial.flush();   // flush out buffer
+      } else {
+        demoMode = !digitalRead(PinDemoMode);
+      }
+   	}
     #else
     } else {
       //check Switch if Auto/Manuel:
@@ -242,6 +283,11 @@ void loop() {
       } else { //FirstConnection
         switchRelaisOff(); //All relays off!
         mainByte = 2;
+      }
+
+      //Add For control Master swtich
+      if(NUM_OF_SECTIONS < 16) {
+        setSection(15, (sectionLo || sectionHi));
       }
       
       //Send to AOG
@@ -368,15 +414,20 @@ void switchRelaisOff() {  //that are the relais, switch all off
   }
   onLo = onHi = 0;
   offLo = offHi = 0b11111111;
+  
+  //Add For control Master swtich
+  if(NUM_OF_SECTIONS < 16) {
+    setSection(15, false);
+  }
 }
 
 void setSection(uint8_t section, bool sectionActive) {
   if (sectionActive && !lastPositionMove[section]) {
-    setPosition(section, positionOpen[count]);
+    setPosition(section, positionOpen[section]);
     lastPositionMove[section] = true;
     lastTimeSectionMove[section] = 0;
   } else if (!sectionActive && lastPositionMove[section]) {
-    setPosition(section, positionClosed[count]);
+    setPosition(section, positionClosed[section]);
     lastPositionMove[section] = false;
     lastTimeSectionMove[section] = 0;
   }
