@@ -1,4 +1,4 @@
-    /* V2.70 - 30/07/2023 - Daniel Desmartins
+    /* V2.80 - 02/08/2023 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
@@ -61,11 +61,14 @@ void(*resetFunc) (void) = 0;
 int16_t EEread = 0;
 
 //pins:
-#define NUM_OF_SECTIONS 8 //16 relays max for PCA9685
-#define PinAogReady 2 //Pin AOG Ready
-#define PinAogConnected 3 //Pin AOG Connected
+#define NUM_OF_SECTIONS 7 //16 relays max for PCA9685
+#define PinAogReady 9 //Pin AOG Ready
+#define PinAogConnected A3 //Pin AOG Connected
+#define AutoSwitch A1  //Switch Mode Auto On/Off
+#define ManuelSwitch A2 //Switch Mode Manuel On/Off
 #define PinDemoMode A0 //launches the demonstration of the servomotors. Advanced in a field in simulation in AOG... admired the result!!!
-const uint8_t LED_PinArray[] = {4, 5, 6, 7, 8, 9, A1, A2, A3}; //Pins, Led activation sections
+const uint8_t switchPinArray[] = {2, 3, 4, 5, 6, 7, 8}; //Pins, Switch activation sections or led    //<- max 7 sections
+#define WORK_WITHOUT_CONTROL //commenter si vous voulez utiliser le code avec controle par intérrupteur
 bool readyIsActive = LOW;
 
 ///////////Régler ici la position d'ouverture, fermeture et neutre de vos servotmoteur (dans l'orde de 1 à 16)/////////////
@@ -117,16 +120,25 @@ boolean manuelModeIsOn = false;
 boolean aogConnected = false;
 boolean firstConnection = true;
 
+uint8_t onLo = 0, offLo = 0, onHi = 0, offHi = 0, mainByte = 0;
 //End of variables
 
 void setup() {  
   pinMode(PinAogReady, OUTPUT);
   pinMode(PinAogConnected, OUTPUT);
-  for (count = 0; count < NUM_OF_SECTIONS; count++) {
-    pinMode(LED_PinArray[count], OUTPUT);
-    digitalWrite(LED_PinArray[count], LOW);
-  }
+  pinMode(AutoSwitch, INPUT_PULLUP);  //INPUT_PULLUP: no external Resistor to GND or to PINx is needed, PULLUP: HIGH state if Switch is open! Connect to GND and D0/PD0/RXD
+  pinMode(ManuelSwitch, INPUT_PULLUP);
   pinMode(PinDemoMode, INPUT_PULLUP);
+  #ifdef WORK_WITHOUT_CONTROL
+  for (count = 0; count < NUM_OF_SECTIONS; count++) {
+    pinMode(switchPinArray[count], OUTPUT);
+    digitalWrite(switchPinArray[count], LOW);
+  }
+  #else
+  for (count = 0; count < NUM_OF_SECTIONS; count++) {
+    pinMode(switchPinArray[count], INPUT_PULLUP);
+  }
+  #endif
 
   digitalWrite(PinAogConnected, HIGH);
   digitalWrite(PinAogReady, !readyIsActive);
@@ -208,17 +220,18 @@ void loop() {
     //emergency off:
     if (watchdogTimer > 10) {
       switchRelaisOff();
+    #ifdef WORK_WITHOUT_CONTROL
       for (count = 0; count < NUM_OF_SECTIONS; count++) {
-        digitalWrite(LED_PinArray[count], LOW);
+        digitalWrite(switchPinArray[count], LOW);
       }
     } else {
       for (count = 0; count < NUM_OF_SECTIONS; count++) {
         if (count < 8) {
           setSection(count, bitRead(sectionLo, count)); //Open or Close sectionLo if AOG requests it in auto mode
-          digitalWrite(LED_PinArray[count], bitRead(sectionLo, count));
+          digitalWrite(switchPinArray[count], bitRead(sectionLo, count));
         } else {
           setSection(count, bitRead(sectionHi, count-8)); //Open or Close  le sectionHi if AOG requests it in auto mode
-          digitalWrite(LED_PinArray[count], bitRead(sectionHi, count-8));
+          digitalWrite(switchPinArray[count], bitRead(sectionHi, count-8));
         }
       }
       
@@ -248,7 +261,94 @@ void loop() {
       } else {
         demoMode = !digitalRead(PinDemoMode);
       }
+   	}
+    #else
+    } else {
+      //check Switch if Auto/Manuel:
+      autoModeIsOn = !digitalRead(AutoSwitch); //Switch has to close for autoModeOn, Switch closes ==> LOW state ==> ! makes it to true
+      if (autoModeIsOn) {
+        mainByte = 1;
+      } else {
+        mainByte = 2;
+        manuelModeIsOn = !digitalRead(ManuelSwitch);
+        if (!manuelModeIsOn) firstConnection = false;
+      }
+      
+      if (!autoModeIsOn) {
+        if(manuelModeIsOn && !firstConnection) { //Mode Manuel
+          for (count = 0; count < NUM_OF_SECTIONS; count++) {
+            if (!digitalRead(switchPinArray[count])) { //Signal LOW ==> switch is closed
+              if (count < 8) {
+                bitClear(offLo, count);
+                bitSet(onLo, count);
+              } else {
+                bitClear(offHi, count-8);
+                bitSet(onHi, count-8);
+              }
+              setSection(count, true); //Section ON
+            } else {
+              if (count < 8) {
+                bitSet(offLo, count);
+                bitClear(onLo, count);
+              } else {
+                bitSet(offHi, count-8);
+                bitClear(onHi, count-8);
+              }
+              setSection(count, false); //Section OFF
+            }
+          }
+        } else { //Mode off
+          switchRelaisOff(); //All relays off!
+        }
+      } else if (!firstConnection) { //Mode Auto
+        onLo = onHi = 0;
+        for (count = 0; count < NUM_OF_SECTIONS; count++) {
+          if (digitalRead(switchPinArray[count])) {
+            if (count < 8) {
+              bitSet(offLo, count); //Info for AOG switch OFF
+            } else {
+              bitSet(offHi, count-8); //Info for AOG switch OFF
+            }
+            setSection(count, false); //Close the section
+          } else { //Signal LOW ==> switch is closed
+            if (count < 8) {
+              bitClear(offLo, count);
+              setSection(count, bitRead(sectionLo, count)); //Open or Close sectionLo if AOG requests it in auto mode
+            } else {
+              bitClear(offHi, count-8); 
+              setSection(count, bitRead(sectionHi, count-8)); //Open or Close  le sectionHi if AOG requests it in auto mode
+            }
+          }
+        }
+      } else { //FirstConnection
+        switchRelaisOff(); //All relays off!
+        mainByte = 2;
+      }
+
+      //Add For control Master swtich
+      if(NUM_OF_SECTIONS < 16) {
+        setSection(15, (sectionLo || sectionHi));
+      }
+      
+      //Send to AOG
+      AOG[5] = (uint8_t)mainByte;
+      AOG[9] = (uint8_t)onLo;
+      AOG[10] = (uint8_t)offLo;
+      AOG[11] = (uint8_t)onHi;
+      AOG[12] = (uint8_t)offHi;
+      
+      //add the checksum
+      int16_t CK_A = 0;
+      for (uint8_t i = 2; i < sizeof(AOG)-1; i++)
+      {
+        CK_A = (CK_A + AOG[i]);
+      }
+      AOG[sizeof(AOG)-1] = CK_A;
+      
+      //off to AOG
+      ether.sendUdp(AOG, sizeof(AOG), portMy, ipDestination, portDestination);
     }
+    #endif
   }
   delay(1);
 
@@ -343,6 +443,8 @@ void switchRelaisOff() {  //that are the relais, switch all off
   for (count = 0; count < NUM_OF_SECTIONS; count++) {
     setSection(count, false);
   }
+  onLo = onHi = 0;
+  offLo = offHi = 0b11111111;
   
   //Add For control Master swtich
   if(NUM_OF_SECTIONS < 16) {

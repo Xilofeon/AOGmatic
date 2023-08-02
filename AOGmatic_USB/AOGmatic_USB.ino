@@ -1,4 +1,4 @@
-    /* V2.70 - 30/07/2023 - Daniel Desmartins
+    /* V2.71 - 02/08/2023 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
@@ -10,17 +10,16 @@
      *  bric bric  29/07/2023
      */
 
-//pins:                                                                                    UPDATE YOUR PINS!!!    //<-
-#define NUM_OF_SECTIONS 7 //16 relays max for PCA9685                                                             //<-
-#define PinAogReady 9 //Pin AOG Conntected                                                                        //<- 
-#define AutoSwitch 10  //Switch Mode Auto On/Off                                                                  //<-
-#define ManuelSwitch 11 //Switch Mode Manuel On/Off                                                               //<-
+//pins:
+#define NUM_OF_SECTIONS 7 //16 relays max for PCA9685
+#define PinAogReady 9 //Pin AOG Ready
+#define AutoSwitch 10  //Switch Mode Auto On/Off
+#define ManuelSwitch 11 //Switch Mode Manuel On/Off
 #define WorkWithoutAogSwitch A5 //Switch for work without AOG (optional)                                          //<-
 #define PinDemoMode A0 //launches the demonstration of the servomotors. Advanced in a field in simulation in AOG... admired the result!!!
 const uint8_t switchPinArray[] = {2, 3, 4, 5, 6, 7, 8, 12, A1, A2, A3, A4}; //Pins, Switch activation sections    //<- max 12 sections
 //#define WORK_WITHOUT_AOG //Allows to use the box without aog connected (optional)
 #define WORK_WITHOUT_CONTROL //commenter si vous voulez utiliser le code avec controle par intérrupteur
-//#define EEPROM_USE //comment out if not use EEPROM and AOG config machine (not currently used in this code)
 bool readyIsActive = LOW;
 
 ///////////Régler ici la position d'ouverture, fermeture et neutre de vos servotmoteur (dans l'orde de 1 à 16)/////////////
