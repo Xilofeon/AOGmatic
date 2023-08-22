@@ -1,4 +1,5 @@
-    /* V2.80 - 02/08/2023 - Daniel Desmartins
+#define VERSION 2.81
+    /*  22/08/2023 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
@@ -147,6 +148,9 @@ void setup() {
   while (!Serial) {
     // wait for serial port to connect. Needed for native USB
   }
+  Serial.println("Firmware : AOGmatic UDP");
+  Serial.print("Version : ");
+  Serial.println(VERSION);
   
   EEPROM.get(0, EEread);              // read identifier
 
