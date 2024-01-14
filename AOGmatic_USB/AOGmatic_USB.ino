@@ -1,4 +1,4 @@
-#define VERSION 2.75
+#define VERSION 2.76
     /*  14/01/2024 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
@@ -44,6 +44,7 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 int16_t EEread = 0;
 
 uint8_t section[] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
+bool fonctionState[] = { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false };
 
 //Demo Mode
 const uint8_t message[] = { 0, 0, 0, 126, 9, 9, 126, 0, 0, 62, 65, 65, 62, 0, 0, 62, 65, 73, 58, 0, 0, 127, 2, 4, 2, 127, 0, 0, 126, 9, 9, 126, 0, 1, 1, 127, 1, 1, 0, 0, 65, 127, 65, 0, 0, 62, 65, 65, 34, 0, 0, 0, 0};
@@ -135,6 +136,7 @@ void setup() {
   
   delay(200); //wait for IO chips to get ready
   switchSectionsOff();
+  setSection();
 } //end of setup
 
 void loop() {
@@ -179,17 +181,17 @@ void loop() {
     } else {
       for (count = 0; count < NUM_OF_SECTIONS; count++) {
         if (count < 8) {
-          setSection(count, bitRead(sectionLo, count)); //Open or Close sectionLo if AOG requests it in auto mode
+          fonctionState[count] = bitRead(sectionLo, count); //Open or Close sectionLo if AOG requests it in auto mode
           digitalWrite(switchPinArray[count], bitRead(sectionLo, count));
         } else {
-          setSection(count, bitRead(sectionHi, count-8)); //Open or Close  le sectionHi if AOG requests it in auto mode
+          fonctionState[count] = bitRead(sectionHi, count-8); //Open or Close  le sectionHi if AOG requests it in auto mode
           digitalWrite(switchPinArray[count], bitRead(sectionHi, count-8));
         }
       }
       
       //Add For control Master swtich
       if (NUM_OF_SECTIONS < 16) {
-        setSection(15, (sectionLo || sectionHi));
+        fonctionState[15] = (sectionLo || sectionHi);
       }
       
       //show life in AgIO
@@ -244,7 +246,7 @@ void loop() {
                 bitClear(offHi, count-8);
                 bitSet(onHi, count-8);
               }
-              setSection(count, true); //Section ON
+              fonctionState[count] =  true; //Section ON
             } else {
               if (count < 8) {
                 bitSet(offLo, count);
@@ -253,7 +255,7 @@ void loop() {
                 bitSet(offHi, count-8);
                 bitClear(onHi, count-8);
               }
-              setSection(count, false); //Section OFF
+              fonctionState[count] = false; //Section OFF
             }
           }
         } else { //Mode off
@@ -268,14 +270,14 @@ void loop() {
             } else {
               bitSet(offHi, count-8); //Info for AOG switch OFF
             }
-            setSection(count, false); //Close the section
+            fonctionState[count] = false; //Close the section
           } else { //Signal LOW ==> switch is closed
             if (count < 8) {
               bitClear(offLo, count);
-              setSection(count, bitRead(sectionLo, count)); //Open or Close sectionLo if AOG requests it in auto mode
+              fonctionState[count] = bitRead(sectionLo, count); //Open or Close sectionLo if AOG requests it in auto mode
             } else {
               bitClear(offHi, count-8); 
-              setSection(count, bitRead(sectionHi, count-8)); //Open or Close  le sectionHi if AOG requests it in auto mode
+              fonctionState[count] = bitRead(sectionHi, count-8); //Open or Close  le sectionHi if AOG requests it in auto mode
             }
           }
         }
@@ -286,7 +288,7 @@ void loop() {
 
       //Add For control Master swtich
       if(NUM_OF_SECTIONS < 16) {
-        setSection(15, (sectionLo || sectionHi));
+        fonctionState[15] = (sectionLo || sectionHi);
       }
       
       //Send to AOG
@@ -308,6 +310,8 @@ void loop() {
       Serial.flush();   // flush out buffer
     }
     #endif
+
+    setSection();
   }
 
   // Serial Receive
@@ -425,31 +429,29 @@ void loop() {
 
 void switchSectionsOff() {  //that are the sections, switch all off
   for (count = 0; count < NUM_OF_SECTIONS; count++) {
-    setSection(count, false);
+    fonctionState[count] = false;
   }
   onLo = onHi = 0;
   offLo = offHi = 0b11111111;
   
   //Add For control Master swtich
   if(NUM_OF_SECTIONS < 16) {
-    setSection(15, false);
+    fonctionState[count] = false;
   }
 }
 
-void setSection(uint8_t t_section, bool t_sectionActive) {
-  uint8_t t_pos = 255;
-  for (uint8_t t_count = 0; t_count < 16; t_count++) {
-    t_pos = section[t_count] - 1;
-    if (t_section == t_pos) {
-      if (t_sectionActive && !lastPositionMove[t_count]) {
-        setPosition(t_count, positionOpen[t_count]);
-        lastPositionMove[t_count] = true;
-        lastTimeSectionMove[t_count] = 0;
-      } else if (!t_sectionActive && lastPositionMove[t_count]) {
-        setPosition(t_count, positionClosed[t_count]);
-        lastPositionMove[t_count] = false;
-        lastTimeSectionMove[t_count] = 0;
-      }
+void setSection() {
+  bool t_sectionActive = false;
+  for (count = 0; count < 16; count++) {
+    bool t_sectionActive = fonctionState[section[count] - 1];
+    if (t_sectionActive && !lastPositionMove[count]) {
+      setPosition(count, positionOpen[count]);
+      lastPositionMove[count] = true;
+      lastTimeSectionMove[count] = 0;
+    } else if (!t_sectionActive && lastPositionMove[count]) {
+      setPosition(count, positionClosed[count]);
+      lastPositionMove[count] = false;
+      lastTimeSectionMove[count] = 0;
     }
   }
 }
@@ -473,4 +475,8 @@ void returnNeutralPosition() {
 void setPosition(uint8_t t_section, uint16_t angle) {
   uint16_t t_position = map(angle, ANGLE_MIN, ANGLE_MAX, SERVO_MIN, SERVO_MAX);
   pwm.setPWM(t_section, 0, t_position);
+  Serial.print("Section: ");
+  Serial.print(t_section);
+  Serial.print("Position: ");
+  Serial.println(angle);
 }
