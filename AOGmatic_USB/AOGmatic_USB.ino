@@ -1,4 +1,4 @@
-#define VERSION 2.76
+#define VERSION 2.80
     /*  14/01/2024 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
@@ -41,10 +41,26 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
 #include <EEPROM.h>
 #define EEP_Ident 0x5400
-int16_t EEread = 0;
+
+//Program counter reset
+void(* resetFunc) (void) = 0;
+
+//Variables for config - 0 is false  
+struct Config {
+    uint8_t raiseTime = 2;
+    uint8_t lowerTime = 4;
+    uint8_t enableToolLift = 0;
+    uint8_t isRelayActiveHigh = 0; //if zero, active low (default)
+
+    uint8_t user1 = 0; //user defined values set in machine tab
+    uint8_t user2 = 0;
+    uint8_t user3 = 0;
+    uint8_t user4 = 0;
+
+};  Config aogConfig;   //4 bytes
 
 uint8_t section[] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
-bool fonctionState[] = { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false };
+bool fonctionState[] = { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false };
 
 //Demo Mode
 const uint8_t message[] = { 0, 0, 0, 126, 9, 9, 126, 0, 0, 62, 65, 65, 62, 0, 0, 62, 65, 73, 58, 0, 0, 127, 2, 4, 2, 127, 0, 0, 126, 9, 9, 126, 0, 1, 1, 127, 1, 1, 0, 0, 65, 127, 65, 0, 0, 62, 65, 65, 34, 0, 0, 0, 0};
@@ -63,6 +79,12 @@ bool lastPositionMove[] = {true,true,true,true,true,true,true,true,true,true,tru
 uint8_t watchdogTimer = 12;     //make sure we are talking to AOG
 uint8_t serialResetTimer = 0;   //if serial buffer is getting full, empty it
 
+bool isRaise = false;
+bool isLower = false;
+
+//Communication with AgOpenGPS
+int16_t EEread = 0;
+
 //Parsing PGN
 bool isPGNFound = false, isHeaderFound = false;
 uint8_t pgn = 0, dataLength = 0;
@@ -78,7 +100,7 @@ uint8_t helloCounter = 0;
 uint8_t AOG[] = { 0x80, 0x81, 0x7B, 0xEA, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC };
 
 //The variables used for storage
-uint8_t sectionLo = 0, sectionHi = 0;
+uint8_t sectionLo = 0, sectionHi = 0, tramline = 0, hydLift = 0, geoStop = 0;
 
 uint8_t count = 0;
 
@@ -88,6 +110,8 @@ boolean aogConnected = false;
 boolean firstConnection = true;
 
 uint8_t onLo = 0, offLo = 0, onHi = 0, offHi = 0, mainByte = 0;
+
+uint8_t raiseTimer = 0, lowerTimer = 0, lastTrigger = 0;
 //End of variables
 
 void setup() {  
@@ -123,12 +147,14 @@ void setup() {
 
   if (EEread != EEP_Ident)   // check on first start and write EEPROM
   {
-      EEPROM.put(0, EEP_Ident);
-      EEPROM.put(20, section);
+    EEPROM.put(0, EEP_Ident);
+    EEPROM.put(6, aogConfig);
+    EEPROM.put(20, section);
   }
   else
   {
-      EEPROM.get(20, section);
+    EEPROM.get(6, aogConfig);
+    EEPROM.get(20, section);
   }
 
   pwm.begin();
@@ -310,7 +336,60 @@ void loop() {
       Serial.flush();   // flush out buffer
     }
     #endif
+    
+    //hydraulic lift
 
+    if (hydLift != lastTrigger && (hydLift == 1 || hydLift == 2))
+    {
+        lastTrigger = hydLift;
+        lowerTimer = 0;
+        raiseTimer = 0;
+
+        //200 msec per frame so 5 per second
+        switch (hydLift)
+        {
+            //lower
+        case 1:
+            lowerTimer = aogConfig.lowerTime * 5;
+            break;
+
+            //raise
+        case 2:
+            raiseTimer = aogConfig.raiseTime * 5;
+            break;
+        }
+    }
+
+    //countdown if not zero, make sure up only
+    if (raiseTimer)
+    {
+        raiseTimer--;
+        lowerTimer = 0;
+    }
+    if (lowerTimer) lowerTimer--;
+
+    //if anything wrong, shut off hydraulics, reset last
+    if ((hydLift != 1 && hydLift != 2) || watchdogTimer > 10) //|| gpsSpeed < 2)
+    {
+        lowerTimer = 0;
+        raiseTimer = 0;
+        lastTrigger = 0;
+    }
+
+    if (aogConfig.isRelayActiveHigh)
+    {
+        isLower = isRaise = false;
+        if (lowerTimer) isLower = true;
+        if (raiseTimer) isRaise = true;
+    }
+    else
+    {
+        isLower = isRaise = true;
+        if (lowerTimer) isLower = false;
+        if (raiseTimer) isRaise = false;
+    }
+
+    //set sections
     setSection();
   }
 
@@ -352,13 +431,22 @@ void loop() {
     {
       Serial.read();
       Serial.read();
-      Serial.read();
-      Serial.read();
+      
+      hydLift = Serial.read();
+      tramline = Serial.read();  //bit 0 is right bit 1 is left
+      
       Serial.read();   //high,low bytes
       Serial.read();
       
       sectionLo = Serial.read();          // read relay control from AgOpenGPS
       sectionHi = Serial.read();
+      
+      if (aogConfig.isRelayActiveHigh)
+      {
+          tramline = 255 - tramline;
+          sectionLo = 255 - sectionLo;
+          sectionHi = 255 - sectionHi;
+      }
       
       //Bit 13 CRC
       Serial.read();
@@ -404,6 +492,32 @@ void loop() {
       isHeaderFound = isPGNFound = false;
       pgn = dataLength = 0;
     }
+    else if (pgn == 238) //EE Machine Settings 
+    {
+        aogConfig.raiseTime = Serial.read();
+        aogConfig.lowerTime = Serial.read();
+        aogConfig.enableToolLift = Serial.read();
+
+        //set1 
+        uint8_t sett = Serial.read();  //setting0     
+        if (bitRead(sett, 0)) aogConfig.isRelayActiveHigh = 1; else aogConfig.isRelayActiveHigh = 0;
+
+        aogConfig.user1 = Serial.read();
+        aogConfig.user2 = Serial.read();
+        aogConfig.user3 = Serial.read();
+        aogConfig.user4 = Serial.read();
+
+        //crc
+        Serial.read();
+
+        //save in EEPROM and restart
+        EEPROM.put(6, aogConfig);
+        resetFunc();
+
+        //reset for next pgn sentence
+        isHeaderFound = isPGNFound = false;
+        pgn = dataLength = 0;
+    }
     else if (pgn == 236) //Sections Settings 
     {
         for (uint8_t i = 0; i < 24; i++)
@@ -441,6 +555,16 @@ void switchSectionsOff() {  //that are the sections, switch all off
 }
 
 void setSection() {
+  fonctionState[16] = isLower;
+  fonctionState[17] = isRaise;
+  
+  //Tram
+  fonctionState[18] = bitRead(tramline, 0); //right
+  fonctionState[19] = bitRead(tramline, 1); //left
+  
+  //GeoStop
+  fonctionState[20] =  (geoStop == 0) ? 0 : 1;
+  
   bool t_sectionActive = false;
   for (count = 0; count < 16; count++) {
     bool t_sectionActive = fonctionState[section[count] - 1];
@@ -475,8 +599,4 @@ void returnNeutralPosition() {
 void setPosition(uint8_t t_section, uint16_t angle) {
   uint16_t t_position = map(angle, ANGLE_MIN, ANGLE_MAX, SERVO_MIN, SERVO_MAX);
   pwm.setPWM(t_section, 0, t_position);
-  Serial.print("Section: ");
-  Serial.print(t_section);
-  Serial.print("Position: ");
-  Serial.println(angle);
 }
