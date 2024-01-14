@@ -1,4 +1,4 @@
-#define VERSION 2.82
+#define VERSION 2.90
     /*  14/01/2024 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
@@ -89,7 +89,22 @@ uint8_t positionClosed[] =  {155,155,155,155,155,155,155,155,155,155,155,155,155
 #include <Adafruit_PWMServoDriver.h>
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
-uint8_t section[] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
+//Variables for config - 0 is false  
+struct Config {
+    uint8_t raiseTime = 2;
+    uint8_t lowerTime = 4;
+    uint8_t enableToolLift = 0;
+    uint8_t isRelayActiveHigh = 0; //if zero, active low (default)
+
+    uint8_t user1 = 0; //user defined values set in machine tab
+    uint8_t user2 = 0;
+    uint8_t user3 = 0;
+    uint8_t user4 = 0;
+
+};  Config aogConfig;   //4 bytes
+
+uint8_t fonction[] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
+bool fonctionState[] = { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false };
 
 //Demo Mode
 const uint8_t message[] = { 0, 0, 0, 126, 9, 9, 126, 0, 0, 62, 65, 65, 62, 0, 0, 62, 65, 73, 58, 0, 0, 127, 2, 4, 2, 127, 0, 0, 126, 9, 9, 126, 0, 1, 1, 127, 1, 1, 0, 0, 65, 127, 65, 0, 0, 62, 65, 65, 34, 0, 0, 0, 0};
@@ -108,13 +123,21 @@ bool lastPositionMove[] = {true,true,true,true,true,true,true,true,true,true,tru
 uint8_t watchdogTimer = 12;     //make sure we are talking to AOG
 uint8_t serialResetTimer = 0;   //if serial buffer is getting full, empty it
 
+bool isRaise = false;
+bool isLower = false;
+
+//Parsing PGN
+bool isPGNFound = false, isHeaderFound = false;
+uint8_t pgn = 0, dataLength = 0;
+int16_t tempHeader = 0;
+
 //hello from AgIO
 uint8_t helloFromMachine[] = { 128, 129, 123, 123, 5, 0, 0, 0, 0, 0, 71 };
 
 uint8_t AOG[] = { 0x80, 0x81, 0x7B, 0xEA, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC };
 
 //The variables used for storage
-uint8_t sectionLo = 0, sectionHi = 0;
+uint8_t sectionLo = 0, sectionHi = 0, tramline = 0, hydLift = 0, geoStop = 0;
 
 uint8_t count = 0;
 
@@ -124,6 +147,8 @@ boolean aogConnected = false;
 boolean firstConnection = true;
 
 uint8_t onLo = 0, offLo = 0, onHi = 0, offHi = 0, mainByte = 0;
+
+uint8_t raiseTimer = 0, lowerTimer = 0, lastTrigger = 0;
 //End of variables
 
 void setup() {  
@@ -159,14 +184,16 @@ void setup() {
 
   if (EEread != EEP_Ident)   // check on first start and write EEPROM
   {
-      EEPROM.put(0, EEP_Ident);
-      EEPROM.put(50, networkAddress);
-      EEPROM.put(20, section);
+    EEPROM.put(0, EEP_Ident);
+    EEPROM.put(6, aogConfig);
+    EEPROM.put(20, fonction);
+    EEPROM.put(50, networkAddress);
   }
   else
   {
-      EEPROM.get(50, networkAddress);
-      EEPROM.put(20, section);
+    EEPROM.get(6, aogConfig);
+    EEPROM.get(20, fonction);
+    EEPROM.get(50, networkAddress);
   }
 
   if (ether.begin(sizeof Ethernet::buffer, mymac, CS_Pin) == 0)
@@ -199,6 +226,7 @@ void setup() {
   
   delay(200); //wait for IO chips to get ready
   switchSectionsOff();
+  setSection();
 } //end of setup
 
 void loop() {
@@ -236,17 +264,17 @@ void loop() {
     } else {
       for (count = 0; count < NUM_OF_SECTIONS; count++) {
         if (count < 8) {
-          setSection(count, bitRead(sectionLo, count)); //Open or Close sectionLo if AOG requests it in auto mode
+          fonctionState[count] = bitRead(sectionLo, count); //Open or Close sectionLo if AOG requests it in auto mode
           digitalWrite(switchPinArray[count], bitRead(sectionLo, count));
         } else {
-          setSection(count, bitRead(sectionHi, count-8)); //Open or Close  le sectionHi if AOG requests it in auto mode
+          fonctionState[count] = bitRead(sectionHi, count-8); //Open or Close  le sectionHi if AOG requests it in auto mode
           digitalWrite(switchPinArray[count], bitRead(sectionHi, count-8));
         }
       }
       
       //Add For control Master swtich
       if (NUM_OF_SECTIONS < 16) {
-        setSection(15, (sectionLo || sectionHi));
+        fonctionState[15] = (sectionLo || sectionHi);
       }
       
       //Demo Mode
@@ -294,7 +322,7 @@ void loop() {
                 bitClear(offHi, count-8);
                 bitSet(onHi, count-8);
               }
-              setSection(count, true); //Section ON
+              fonctionState[count] =  true; //Section ON
             } else {
               if (count < 8) {
                 bitSet(offLo, count);
@@ -303,7 +331,7 @@ void loop() {
                 bitSet(offHi, count-8);
                 bitClear(onHi, count-8);
               }
-              setSection(count, false); //Section OFF
+              fonctionState[count] = false; //Section OFF
             }
           }
         } else { //Mode off
@@ -318,14 +346,14 @@ void loop() {
             } else {
               bitSet(offHi, count-8); //Info for AOG switch OFF
             }
-            setSection(count, false); //Close the section
+            fonctionState[count] = false; //Close the section
           } else { //Signal LOW ==> switch is closed
             if (count < 8) {
               bitClear(offLo, count);
-              setSection(count, bitRead(sectionLo, count)); //Open or Close sectionLo if AOG requests it in auto mode
+              fonctionState[count] = bitRead(sectionLo, count); //Open or Close sectionLo if AOG requests it in auto mode
             } else {
               bitClear(offHi, count-8); 
-              setSection(count, bitRead(sectionHi, count-8)); //Open or Close  le sectionHi if AOG requests it in auto mode
+              fonctionState[count] = bitRead(sectionHi, count-8); //Open or Close  le sectionHi if AOG requests it in auto mode
             }
           }
         }
@@ -336,7 +364,7 @@ void loop() {
 
       //Add For control Master swtich
       if(NUM_OF_SECTIONS < 16) {
-        setSection(15, (sectionLo || sectionHi));
+        fonctionState[15] = (sectionLo || sectionHi);
       }
       
       //Send to AOG
@@ -358,6 +386,61 @@ void loop() {
       ether.sendUdp(AOG, sizeof(AOG), portMy, ipDestination, portDestination);
     }
     #endif
+    
+    //hydraulic lift
+
+    if (hydLift != lastTrigger && (hydLift == 1 || hydLift == 2))
+    {
+        lastTrigger = hydLift;
+        lowerTimer = 0;
+        raiseTimer = 0;
+
+        //200 msec per frame so 5 per second
+        switch (hydLift)
+        {
+            //lower
+        case 1:
+            lowerTimer = aogConfig.lowerTime * 5;
+            break;
+
+            //raise
+        case 2:
+            raiseTimer = aogConfig.raiseTime * 5;
+            break;
+        }
+    }
+
+    //countdown if not zero, make sure up only
+    if (raiseTimer)
+    {
+        raiseTimer--;
+        lowerTimer = 0;
+    }
+    if (lowerTimer) lowerTimer--;
+
+    //if anything wrong, shut off hydraulics, reset last
+    if ((hydLift != 1 && hydLift != 2) || watchdogTimer > 10) //|| gpsSpeed < 2)
+    {
+        lowerTimer = 0;
+        raiseTimer = 0;
+        lastTrigger = 0;
+    }
+
+    if (aogConfig.isRelayActiveHigh)
+    {
+        isLower = isRaise = false;
+        if (lowerTimer) isLower = true;
+        if (raiseTimer) isRaise = true;
+    }
+    else
+    {
+        isLower = isRaise = true;
+        if (lowerTimer) isLower = false;
+        if (raiseTimer) isRaise = false;
+    }
+
+    //set sections
+    setSection();
   }
   delay(1);
 
@@ -378,8 +461,19 @@ void udpSteerRecv(uint16_t dest_port, uint8_t src_ip[IP_LEN], uint16_t src_port,
 
     if (udpData[3] == 239) //machine Data
     {
+      hydLift = udpData[7];
+      tramline = udpData[8];  //bit 0 is right bit 1 is left
+      geoStop = udpData[9];
+      
       sectionLo = udpData[11];          // read relay control from AgOpenGPS
       sectionHi = udpData[12];
+      
+      if (aogConfig.isRelayActiveHigh)
+      {
+          tramline = 255 - tramline;
+          sectionLo = 255 - sectionLo;
+          sectionHi = 255 - sectionHi;
+      }
       
       //reset watchdog
       watchdogTimer = 0;
@@ -405,6 +499,27 @@ void udpSteerRecv(uint16_t dest_port, uint8_t src_ip[IP_LEN], uint16_t src_port,
       helloFromMachine[6] = sectionHi;
 
       ether.sendUdp(helloFromMachine, sizeof(helloFromMachine), portMy, ipDestination, portDestination);
+    }
+    else if (udpData[3] == 238)
+    {
+        aogConfig.raiseTime = udpData[5];
+        aogConfig.lowerTime = udpData[6];
+        aogConfig.enableToolLift = udpData[7];
+
+        //set1 
+        uint8_t sett = udpData[8];  //setting0     
+        if (bitRead(sett, 0)) aogConfig.isRelayActiveHigh = 1; else aogConfig.isRelayActiveHigh = 0;
+
+        aogConfig.user1 = udpData[9];
+        aogConfig.user2 = udpData[10];
+        aogConfig.user3 = udpData[11];
+        aogConfig.user4 = udpData[12];
+
+        //crc
+
+        //save in EEPROM and restart
+        EEPROM.put(6, aogConfig);
+        //resetFunc();
     }
     else if (udpData[3] == 201)
     {
@@ -449,41 +564,50 @@ void udpSteerRecv(uint16_t dest_port, uint8_t src_ip[IP_LEN], uint16_t src_port,
     {
         for (uint8_t i = 0; i < 16; i++)
         {
-            section[i] = udpData[i + 5];
+            fonction[i] = udpData[i + 5];
         }
 
         //save in EEPROM and restart
-        EEPROM.put(20, section);
+        EEPROM.put(20, fonction);
     }
   }
 }
 
 void switchSectionsOff() {  //that are the sections, switch all off
   for (count = 0; count < NUM_OF_SECTIONS; count++) {
-    setSection(count, false);
+    fonctionState[count] = false;
   }
   onLo = onHi = 0;
   offLo = offHi = 0b11111111;
   
   //Add For control Master swtich
   if(NUM_OF_SECTIONS < 16) {
-    setSection(15, false);
+    fonctionState[count] = false;
   }
 }
 
-void setSection(uint8_t t_section, bool t_sectionActive) {
-  t_section = section[t_section] - 1;
+void setSection() {
+  fonctionState[16] = isLower;
+  fonctionState[17] = isRaise;
+  
+  //Tram
+  fonctionState[18] = bitRead(tramline, 0); //right
+  fonctionState[19] = bitRead(tramline, 1); //left
+  
+  //GeoStop
+  fonctionState[20] =  geoStop;
+  
+  bool t_sectionActive = false;
   for (count = 0; count < 16; count++) {
-    if (count == t_section) {
-      if (t_sectionActive && !lastPositionMove[count]) {
-        setPosition(count, positionOpen[count]);
-        lastPositionMove[count] = true;
-        lastTimeSectionMove[count] = 0;
-      } else if (!t_sectionActive && lastPositionMove[count]) {
-        setPosition(count, positionClosed[count]);
-        lastPositionMove[count] = false;
-        lastTimeSectionMove[count] = 0;
-      }
+    bool t_sectionActive = fonctionState[fonction[count] - 1];
+    if (t_sectionActive && !lastPositionMove[count]) {
+      setPosition(count, positionOpen[count]);
+      lastPositionMove[count] = true;
+      lastTimeSectionMove[count] = 0;
+    } else if (!t_sectionActive && lastPositionMove[count]) {
+      setPosition(count, positionClosed[count]);
+      lastPositionMove[count] = false;
+      lastTimeSectionMove[count] = 0;
     }
   }
 }

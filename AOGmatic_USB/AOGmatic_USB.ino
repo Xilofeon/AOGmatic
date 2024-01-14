@@ -1,4 +1,4 @@
-#define VERSION 2.80
+#define VERSION 2.90
     /*  14/01/2024 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
@@ -59,7 +59,7 @@ struct Config {
 
 };  Config aogConfig;   //4 bytes
 
-uint8_t section[] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
+uint8_t fonction[] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
 bool fonctionState[] = { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false };
 
 //Demo Mode
@@ -149,12 +149,12 @@ void setup() {
   {
     EEPROM.put(0, EEP_Ident);
     EEPROM.put(6, aogConfig);
-    EEPROM.put(20, section);
+    EEPROM.put(20, fonction);
   }
   else
   {
     EEPROM.get(6, aogConfig);
-    EEPROM.get(20, section);
+    EEPROM.get(20, fonction);
   }
 
   pwm.begin();
@@ -243,7 +243,7 @@ void loop() {
         }
         AOG[sizeof(AOG) - 1] = CK_A;
         
-	      Serial.write(AOG, sizeof(AOG));
+        Serial.write(AOG, sizeof(AOG));
         Serial.flush();   // flush out buffer
       } else {
         demoMode = !digitalRead(PinDemoMode);
@@ -435,10 +435,10 @@ void loop() {
       hydLift = Serial.read();
       tramline = Serial.read();  //bit 0 is right bit 1 is left
       
-      Serial.read();   //high,low bytes
+      geoStop = Serial.read();
       Serial.read();
       
-      sectionLo = Serial.read();          // read relay control from AgOpenGPS
+      sectionLo = Serial.read(); // read section control from AgOpenGPS
       sectionHi = Serial.read();
       
       if (aogConfig.isRelayActiveHigh)
@@ -523,12 +523,12 @@ void loop() {
         for (uint8_t i = 0; i < 24; i++)
         {
           if (i < 16)
-            section[i] = Serial.read();
+            fonction[i] = Serial.read();
           else
             Serial.read();
         }
 
-        EEPROM.put(20, section);
+        EEPROM.put(20, fonction);
 
         //reset for next pgn sentence
         isHeaderFound = isPGNFound = false;
@@ -563,11 +563,11 @@ void setSection() {
   fonctionState[19] = bitRead(tramline, 1); //left
   
   //GeoStop
-  fonctionState[20] =  (geoStop == 0) ? 0 : 1;
+  fonctionState[20] =  geoStop;
   
   bool t_sectionActive = false;
   for (count = 0; count < 16; count++) {
-    bool t_sectionActive = fonctionState[section[count] - 1];
+    bool t_sectionActive = fonctionState[fonction[count] - 1];
     if (t_sectionActive && !lastPositionMove[count]) {
       setPosition(count, positionOpen[count]);
       lastPositionMove[count] = true;
