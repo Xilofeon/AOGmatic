@@ -1,5 +1,5 @@
-#define VERSION 2.81
-    /*  22/08/2023 - Daniel Desmartins
+#define VERSION 2.82
+    /*  14/01/2024 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
@@ -89,6 +89,8 @@ uint8_t positionClosed[] =  {155,155,155,155,155,155,155,155,155,155,155,155,155
 #include <Adafruit_PWMServoDriver.h>
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
+uint8_t section[] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
+
 //Demo Mode
 const uint8_t message[] = { 0, 0, 0, 126, 9, 9, 126, 0, 0, 62, 65, 65, 62, 0, 0, 62, 65, 73, 58, 0, 0, 127, 2, 4, 2, 127, 0, 0, 126, 9, 9, 126, 0, 1, 1, 127, 1, 1, 0, 0, 65, 127, 65, 0, 0, 62, 65, 65, 34, 0, 0, 0, 0};
 const uint16_t tableau = 530;
@@ -148,6 +150,7 @@ void setup() {
   while (!Serial) {
     // wait for serial port to connect. Needed for native USB
   }
+  Serial.println("");
   Serial.println("Firmware : AOGmatic UDP");
   Serial.print("Version : ");
   Serial.println(VERSION);
@@ -158,10 +161,12 @@ void setup() {
   {
       EEPROM.put(0, EEP_Ident);
       EEPROM.put(50, networkAddress);
+      EEPROM.put(20, section);
   }
   else
   {
       EEPROM.get(50, networkAddress);
+      EEPROM.put(20, section);
   }
 
   if (ether.begin(sizeof Ethernet::buffer, mymac, CS_Pin) == 0)
@@ -193,7 +198,7 @@ void setup() {
   pwm.setPWMFreq(SERVO_FREQ);
   
   delay(200); //wait for IO chips to get ready
-  switchRelaisOff();
+  switchSectionsOff();
 } //end of setup
 
 void loop() {
@@ -209,7 +214,7 @@ void loop() {
       while (Serial.available() > 0) Serial.read();
       serialResetTimer = 0;
     }
-
+    
     if (TIME_RETURN_NEUTRAL) returnNeutralPosition();
     
     if (watchdogTimer > 20) {
@@ -223,7 +228,7 @@ void loop() {
     
     //emergency off:
     if (watchdogTimer > 10) {
-      switchRelaisOff();
+      switchSectionsOff();
     #ifdef WORK_WITHOUT_CONTROL
       for (count = 0; count < NUM_OF_SECTIONS; count++) {
         digitalWrite(switchPinArray[count], LOW);
@@ -440,10 +445,20 @@ void udpSteerRecv(uint16_t dest_port, uint8_t src_ip[IP_LEN], uint16_t src_port,
             ether.sendUdp(scanReply, sizeof(scanReply), portMy, ipDest, portDest);
         }
     }
+    else if (udpData[3] == 236) //Sections Settings 
+    {
+        for (uint8_t i = 0; i < 16; i++)
+        {
+            section[i] = udpData[i + 5];
+        }
+
+        //save in EEPROM and restart
+        EEPROM.put(20, section);
+    }
   }
 }
 
-void switchRelaisOff() {  //that are the relais, switch all off
+void switchSectionsOff() {  //that are the sections, switch all off
   for (count = 0; count < NUM_OF_SECTIONS; count++) {
     setSection(count, false);
   }
@@ -456,21 +471,26 @@ void switchRelaisOff() {  //that are the relais, switch all off
   }
 }
 
-void setSection(uint8_t section, bool sectionActive) {
-  if (sectionActive && !lastPositionMove[section]) {
-    setPosition(section, positionOpen[section]);
-    lastPositionMove[section] = true;
-    lastTimeSectionMove[section] = 0;
-  } else if (!sectionActive && lastPositionMove[section]) {
-    setPosition(section, positionClosed[section]);
-    lastPositionMove[section] = false;
-    lastTimeSectionMove[section] = 0;
+void setSection(uint8_t t_section, bool t_sectionActive) {
+  t_section = section[t_section] - 1;
+  for (count = 0; count < 16; count++) {
+    if (count == t_section) {
+      if (t_sectionActive && !lastPositionMove[count]) {
+        setPosition(count, positionOpen[count]);
+        lastPositionMove[count] = true;
+        lastTimeSectionMove[count] = 0;
+      } else if (!t_sectionActive && lastPositionMove[count]) {
+        setPosition(count, positionClosed[count]);
+        lastPositionMove[count] = false;
+        lastTimeSectionMove[count] = 0;
+      }
+    }
   }
 }
 
 void returnNeutralPosition() {
   uint8_t tmp = 0;
-  for (count = 0; count < NUM_OF_SECTIONS; count++) {
+  for (count = 0; count < 16; count++) {
     tmp = lastTimeSectionMove[count];
     if (tmp != 255) {
       if (tmp < TIME_RETURN_NEUTRAL) {
@@ -484,7 +504,7 @@ void returnNeutralPosition() {
   }
 }
 
-void setPosition(uint8_t section, uint16_t angle) {
+void setPosition(uint8_t t_section, uint16_t angle) {
   uint16_t t_position = map(angle, ANGLE_MIN, ANGLE_MAX, SERVO_MIN, SERVO_MAX);
-  pwm.setPWM(section, 0, t_position);
+  pwm.setPWM(t_section, 0, t_position);
 }

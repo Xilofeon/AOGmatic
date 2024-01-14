@@ -1,5 +1,5 @@
-#define VERSION 2.72
-    /*  22/08/2023 - Daniel Desmartins
+#define VERSION 2.75
+    /*  14/01/2024 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
@@ -16,10 +16,8 @@
 #define PinAogReady 9 //Pin AOG Ready
 #define AutoSwitch 10  //Switch Mode Auto On/Off
 #define ManuelSwitch 11 //Switch Mode Manuel On/Off
-#define WorkWithoutAogSwitch A5 //Switch for work without AOG (optional)                                          //<-
 #define PinDemoMode A0 //launches the demonstration of the servomotors. Advanced in a field in simulation in AOG... admired the result!!!
-const uint8_t switchPinArray[] = {2, 3, 4, 5, 6, 7, 8, 12, A1, A2, A3, A4}; //Pins, Switch activation sections    //<- max 12 sections
-//#define WORK_WITHOUT_AOG //Allows to use the box without aog connected (optional)
+const uint8_t switchPinArray[] = {2, 3, 4, 5, 6, 7, 8, 12, A1, A2, A3}; //Pins, Switch activation sections    //<- max 11 sections
 #define WORK_WITHOUT_CONTROL //commenter si vous voulez utiliser le code avec controle par intérrupteur
 bool readyIsActive = LOW;
 
@@ -40,6 +38,12 @@ uint8_t positionClosed[] =  {155,155,155,155,155,155,155,155,155,155,155,155,155
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
+
+#include <EEPROM.h>
+#define EEP_Ident 0x5400
+int16_t EEread = 0;
+
+uint8_t section[] = { 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 };
 
 //Demo Mode
 const uint8_t message[] = { 0, 0, 0, 126, 9, 9, 126, 0, 0, 62, 65, 65, 62, 0, 0, 62, 65, 73, 58, 0, 0, 127, 2, 4, 2, 127, 0, 0, 126, 9, 9, 126, 0, 1, 1, 127, 1, 1, 0, 0, 65, 127, 65, 0, 0, 62, 65, 65, 34, 0, 0, 0, 0};
@@ -109,15 +113,28 @@ void setup() {
   while (!Serial) {
     // wait for serial port to connect. Needed for native USB
   }
+  Serial.println("");
   Serial.println("Firmware : AOGmatic USB");
   Serial.print("Version : ");
   Serial.println(VERSION);
   
+  EEPROM.get(0, EEread);              // read identifier
+
+  if (EEread != EEP_Ident)   // check on first start and write EEPROM
+  {
+      EEPROM.put(0, EEP_Ident);
+      EEPROM.put(20, section);
+  }
+  else
+  {
+      EEPROM.get(20, section);
+  }
+
   pwm.begin();
   pwm.setPWMFreq(SERVO_FREQ);
   
   delay(200); //wait for IO chips to get ready
-  switchRelaisOff();
+  switchSectionsOff();
 } //end of setup
 
 void loop() {
@@ -128,33 +145,12 @@ void loop() {
     //avoid overflow of watchdogTimer:
     if (watchdogTimer++ > 250) watchdogTimer = 12;
     
-    #ifdef WORK_WITHOUT_AOG
-    while ((watchdogTimer > 10) && !analogRead(WorkWithoutAogSwitch)) {
-      for (count = 0; count < NUM_OF_SECTIONS; count++) {
-        if (digitalRead(switchPinArray[count]) || (digitalRead(AutoSwitch) && digitalRead(ManuelSwitch))) {
-          setSection(count, false); //Section OFF
-        } else {
-          setSection(count, true); //Section ON
-        }
-      }
-      if (serialResetTimer++ < 100 || serialResetTimer > 110) {
-        watchdogTimer = serialResetTimer = 100;
-        if (timeOfReturnNeutral) returnNeutralPosition();
-      }
-      delay(10);
-      if (Serial.available() > 4) {
-        lastTime = 200 + millis();
-        break;
-      }
-    }
-    #endif
-    
     //clean out serial buffer to prevent buffer overflow:
     if (serialResetTimer++ > 20) {
       while (Serial.available() > 0) Serial.read();
       serialResetTimer = 0;
     }
-
+    
     if (TIME_RETURN_NEUTRAL) returnNeutralPosition();
     
     if (watchdogTimer > 20) {
@@ -168,7 +164,7 @@ void loop() {
     
     //emergency off:
     if (watchdogTimer > 10) {
-      switchRelaisOff();
+      switchSectionsOff();
       
       //show life in AgIO
       if (++helloCounter > 10 && !helloUDP) {
@@ -219,7 +215,7 @@ void loop() {
         }
         AOG[sizeof(AOG) - 1] = CK_A;
         
-	    Serial.write(AOG, sizeof(AOG));
+	      Serial.write(AOG, sizeof(AOG));
         Serial.flush();   // flush out buffer
       } else {
         demoMode = !digitalRead(PinDemoMode);
@@ -371,7 +367,7 @@ void loop() {
 
       //reset for next pgn sentence
       isHeaderFound = isPGNFound = false;
-      pgn=dataLength=0;
+      pgn = dataLength = 0;
       
       if (!aogConnected) {
         digitalWrite(PinAogReady, readyIsActive);
@@ -404,14 +400,30 @@ void loop() {
       isHeaderFound = isPGNFound = false;
       pgn = dataLength = 0;
     }
+    else if (pgn == 236) //Sections Settings 
+    {
+        for (uint8_t i = 0; i < 24; i++)
+        {
+          if (i < 16)
+            section[i] = Serial.read();
+          else
+            Serial.read();
+        }
+
+        EEPROM.put(20, section);
+
+        //reset for next pgn sentence
+        isHeaderFound = isPGNFound = false;
+        pgn = dataLength = 0;
+    }
     else { //reset for next pgn sentence
       isHeaderFound = isPGNFound = false;
-      pgn=dataLength=0;
+      pgn = dataLength = 0;
     }
   }
 } //end of main loop
 
-void switchRelaisOff() {  //that are the relais, switch all off
+void switchSectionsOff() {  //that are the sections, switch all off
   for (count = 0; count < NUM_OF_SECTIONS; count++) {
     setSection(count, false);
   }
@@ -424,21 +436,27 @@ void switchRelaisOff() {  //that are the relais, switch all off
   }
 }
 
-void setSection(uint8_t section, bool sectionActive) {
-  if (sectionActive && !lastPositionMove[section]) {
-    setPosition(section, positionOpen[section]);
-    lastPositionMove[section] = true;
-    lastTimeSectionMove[section] = 0;
-  } else if (!sectionActive && lastPositionMove[section]) {
-    setPosition(section, positionClosed[section]);
-    lastPositionMove[section] = false;
-    lastTimeSectionMove[section] = 0;
+void setSection(uint8_t t_section, bool t_sectionActive) {
+  uint8_t t_pos = 255;
+  for (uint8_t t_count = 0; t_count < 16; t_count++) {
+    t_pos = section[t_count] - 1;
+    if (t_section == t_pos) {
+      if (t_sectionActive && !lastPositionMove[t_count]) {
+        setPosition(t_count, positionOpen[t_count]);
+        lastPositionMove[t_count] = true;
+        lastTimeSectionMove[t_count] = 0;
+      } else if (!t_sectionActive && lastPositionMove[t_count]) {
+        setPosition(t_count, positionClosed[t_count]);
+        lastPositionMove[t_count] = false;
+        lastTimeSectionMove[t_count] = 0;
+      }
+    }
   }
 }
 
 void returnNeutralPosition() {
   uint8_t tmp = 0;
-  for (count = 0; count < NUM_OF_SECTIONS; count++) {
+  for (count = 0; count < 16; count++) {
     tmp = lastTimeSectionMove[count];
     if (tmp != 255) {
       if (tmp < TIME_RETURN_NEUTRAL) {
@@ -452,7 +470,7 @@ void returnNeutralPosition() {
   }
 }
 
-void setPosition(uint8_t section, uint16_t angle) {
+void setPosition(uint8_t t_section, uint16_t angle) {
   uint16_t t_position = map(angle, ANGLE_MIN, ANGLE_MAX, SERVO_MIN, SERVO_MAX);
-  pwm.setPWM(section, 0, t_position);
+  pwm.setPWM(t_section, 0, t_position);
 }
