@@ -395,17 +395,17 @@ void loop() {
         lowerTimer = 0;
         raiseTimer = 0;
 
-        //200 msec per frame so 5 per second
+        //100 msec per frame so 10 per second
         switch (hydLift)
         {
             //lower
         case 1:
-            lowerTimer = aogConfig.lowerTime * 5;
+            lowerTimer = aogConfig.lowerTime * 10;
             break;
 
             //raise
         case 2:
-            raiseTimer = aogConfig.raiseTime * 5;
+            raiseTimer = aogConfig.raiseTime * 10;
             break;
         }
     }
