@@ -1,5 +1,5 @@
-#define VERSION 2.90
-    /*  14/01/2024 - Daniel Desmartins
+#define VERSION 2.91
+    /*  21/01/2024 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
@@ -20,6 +20,7 @@
 const uint8_t switchPinArray[] = {2, 3, 4, 5, 6, 7, 8, 12, A1, A2, A3}; //Pins, Switch activation sections    //<- max 11 sections
 #define WORK_WITHOUT_CONTROL //commenter si vous voulez utiliser le code avec controle par intérrupteur
 bool readyIsActive = LOW;
+const byte asynSection = 0b00000000;
 
 ///////////Régler ici la position d'ouverture, fermeture et neutre de vos servotmoteur (dans l'orde de 1 à 16)/////////////
 uint8_t positionOpen[] =    { 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15};   //position ouvert en degré
@@ -102,7 +103,7 @@ uint8_t AOG[] = { 0x80, 0x81, 0x7B, 0xEA, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0xCC };
 //The variables used for storage
 uint8_t sectionLo = 0, sectionHi = 0, tramline = 0, hydLift = 0, geoStop = 0;
 
-uint8_t count = 0;
+uint8_t count = 0, countAsyn = 0;
 
 boolean autoModeIsOn = false;
 boolean manuelModeIsOn = false;
@@ -263,8 +264,9 @@ void loop() {
       
       if (!autoModeIsOn) {
         if(manuelModeIsOn && !firstConnection) { //Mode Manuel
+          countAsyn = 0;
           for (count = 0; count < NUM_OF_SECTIONS; count++) {
-            if (!digitalRead(switchPinArray[count])) { //Signal LOW ==> switch is closed
+            if (!digitalRead(switchPinArray[count - countAsyn])) { //Signal LOW ==> switch is closed
               if (count < 8) {
                 bitClear(offLo, count);
                 bitSet(onLo, count);
@@ -273,6 +275,20 @@ void loop() {
                 bitSet(onHi, count-8);
               }
               fonctionState[count] =  true; //Section ON
+
+              //asynchronous section
+              if (bitRead(asynSection, count - countAsyn)) {
+                count++;
+                countAsyn++;
+                if (count < 8) {
+                  bitClear(offLo, count);
+                  bitSet(onLo, count);
+                } else {
+                  bitClear(offHi, count-8);
+                  bitSet(onHi, count-8);
+                }
+                fonctionState[count] =  true; //Section ON
+              }
             } else {
               if (count < 8) {
                 bitSet(offLo, count);
@@ -282,21 +298,47 @@ void loop() {
                 bitClear(onHi, count-8);
               }
               fonctionState[count] = false; //Section OFF
+              
+              //asynchronous section
+              if (bitRead(asynSection, count - countAsyn)) {
+                count++;
+                countAsyn++;
+                if (count < 8) {
+                  bitSet(offLo, count);
+                  bitClear(onLo, count);
+                } else {
+                  bitSet(offHi, count-8);
+                  bitClear(onHi, count-8);
+                }
+                fonctionState[count] =  false; //Section OFF
+              }
             }
           }
         } else { //Mode off
           switchRelaisOff(); //All relays off!
         }
       } else if (!firstConnection) { //Mode Auto
-        onLo = onHi = 0;
+        countAsyn = onLo = onHi = 0;
         for (count = 0; count < NUM_OF_SECTIONS; count++) {
-          if (digitalRead(switchPinArray[count])) {
+          if (digitalRead(switchPinArray[count - countAsyn])) {
             if (count < 8) {
               bitSet(offLo, count); //Info for AOG switch OFF
             } else {
               bitSet(offHi, count-8); //Info for AOG switch OFF
             }
             fonctionState[count] = false; //Close the section
+            
+            //asynchronous section
+            if (bitRead(asynSection, count - countAsyn)) {
+              count++;
+              countAsyn++;
+              if (count < 8) {
+                bitSet(offLo, count); //Info for AOG switch OFF
+              } else {
+                bitSet(offHi, count-8); //Info for AOG switch OFF
+              }
+              fonctionState[count] = false; //Close the section
+            }
           } else { //Signal LOW ==> switch is closed
             if (count < 8) {
               bitClear(offLo, count);
@@ -304,6 +346,19 @@ void loop() {
             } else {
               bitClear(offHi, count-8); 
               fonctionState[count] = bitRead(sectionHi, count-8); //Open or Close  le sectionHi if AOG requests it in auto mode
+            }
+            
+            //asynchronous section
+            if (bitRead(asynSection, count - countAsyn)) {
+              count++;
+              countAsyn++;
+              if (count < 8) {
+                bitClear(offLo, count);
+                fonctionState[count] = bitRead(sectionLo, count); //Open or Close sectionLo if AOG requests it in auto mode
+              } else {
+                bitClear(offHi, count-8); 
+                fonctionState[count] = bitRead(sectionHi, count-8); //Open or Close  le sectionHi if AOG requests it in auto mode
+              }
             }
           }
         }
@@ -567,7 +622,7 @@ void setSection() {
   
   bool t_sectionActive = false;
   for (count = 0; count < 16; count++) {
-    bool t_sectionActive = fonctionState[fonction[count] - 1];
+    t_sectionActive = fonctionState[fonction[count] - 1];
     if (t_sectionActive && !lastPositionMove[count]) {
       setPosition(count, positionOpen[count]);
       lastPositionMove[count] = true;
