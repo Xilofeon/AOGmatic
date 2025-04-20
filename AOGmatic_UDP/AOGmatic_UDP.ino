@@ -1,5 +1,5 @@
-#define VERSION 2.90
-    /*  14/01/2024 - Daniel Desmartins
+#define VERSION 2.92
+    /*  20/04/2025 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
@@ -59,7 +59,7 @@ void(*resetFunc) (void) = 0;
 #define CS_Pin 10
 
 //Communication with AgOpenGPS
-int16_t EEread = 0;
+uint16_t EEread = 0;
 
 //pins:
 #define NUM_OF_SECTIONS 7 //16 relays max for PCA9685
@@ -175,9 +175,9 @@ void setup() {
   while (!Serial) {
     // wait for serial port to connect. Needed for native USB
   }
-  Serial.println("");
-  Serial.println("Firmware : AOGmatic UDP");
-  Serial.print("Version : ");
+  Serial.println(F(""));
+  Serial.println(F("Firmware : AOGmatic UDP"));
+  Serial.print(F("Version : "));
   Serial.println(VERSION);
   
   EEPROM.get(0, EEread);              // read identifier
@@ -519,7 +519,7 @@ void udpSteerRecv(uint16_t dest_port, uint8_t src_ip[IP_LEN], uint16_t src_port,
 
         //save in EEPROM and restart
         EEPROM.put(6, aogConfig);
-        //resetFunc();
+        resetFunc();
     }
     else if (udpData[3] == 201)
     {

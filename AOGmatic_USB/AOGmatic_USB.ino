@@ -1,5 +1,5 @@
-#define VERSION 2.90
-    /*  14/01/2024 - Daniel Desmartins
+#define VERSION 2.92
+    /*  20/04/2025 - Daniel Desmartins
      *  in collaboration and test with Lolo85 and BricBric
      *  Connected to the Relay Port in AgOpenGPS
      *  If you find any mistakes or have an idea to improove the code, feel free to contact me. N'hésitez pas à me contacter en cas de problème ou si vous avez une idée d'amélioration.
@@ -83,7 +83,7 @@ bool isRaise = false;
 bool isLower = false;
 
 //Communication with AgOpenGPS
-int16_t EEread = 0;
+uint16_t EEread = 0;
 
 //Parsing PGN
 bool isPGNFound = false, isHeaderFound = false;
@@ -138,9 +138,9 @@ void setup() {
   while (!Serial) {
     // wait for serial port to connect. Needed for native USB
   }
-  Serial.println("");
-  Serial.println("Firmware : AOGmatic USB");
-  Serial.print("Version : ");
+  Serial.println(F(""));
+  Serial.println(F("Firmware : AOGmatic USB"));
+  Serial.print(F("Version : "));
   Serial.println(VERSION);
   
   EEPROM.get(0, EEread);              // read identifier
